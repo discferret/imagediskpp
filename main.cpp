@@ -23,24 +23,56 @@ class IMDSector {
 };
 
 class IMDTrack {
-	private:
-		vector<IMDSector> _sectors;
-		int _mode;
-		int phys_cyl;
-		int phys_head;
-		int sec_sz;
 	public:
+		vector<IMDSector> sectors;
+		unsigned int mode;
+		unsigned int phys_cyl;
+		unsigned int phys_head;
+		unsigned int sector_size;
+
 		IMDTrack(istream &in)
 		{
+			char b;
+			bool has_scm, has_shm;
+			unsigned int num_sectors;
+
 			// Mode value
+			in.read(&b, 1); mode = (unsigned char)b;
+
 			// Physical Cylinder
+			in.read(&b, 1); phys_cyl = (unsigned char)b;
+
 			// Head and flags
+			// The actual head number can only be zero or one; the remaining
+			// bits are used for flags.
+			in.read(&b, 1); phys_head = (unsigned char)b & 1;
+			has_scm = (b & 0x80);
+			has_shm = (b & 0x40);
+
 			// Number of Sectors
+			in.read(&b, 1); num_sectors = (unsigned char)b;
+
 			// Sector Size Byte
-			//
+			in.read(&b, 1); sector_size = (unsigned char)b;
+
 			// Sector Numbering Map
+			char *sector_num_map = new char[num_sectors];
+			in.read(sector_num_map, num_sectors);
+
 			// Optional Sector Cylinder Map
+			char *sector_cyl_map = NULL;
+			if (has_scm) {
+				sector_cyl_map = new char[num_sectors];
+				in.read(sector_cyl_map, num_sectors);
+			}
+
 			// Optional Head Map
+			char *sector_head_map = NULL;
+			if (has_shm) {
+				sector_head_map = new char[num_sectors];
+				in.read(sector_head_map, num_sectors);
+			}
+
 			// Sector Data
 		}
 };
@@ -83,7 +115,7 @@ class IMDImage {
 
 int main(void)
 {
-	ifstream f("01_Diagnosic_Disk_Ver_3.51.IMD", ios::in | ios::binary);
+	fstream f("01_Diagnosic_Disk_Ver_3.51.IMD", ios::in | ios::binary);
 
 	IMDImage imd(f);
 }
