@@ -16,10 +16,90 @@
 
 using namespace std;
 
+/// Sector types
+typedef enum {
+	IMDS_NONE,			/// Sector data not available, couldn't be read
+	IMDS_NORMAL,		/// Normal sector
+	IMDS_DELETED,		/// Deleted-data address mark
+	IMDS_NORMAL_DERR,	/// Normal sector read with data error
+	IMDS_DELETED_DERR	/// Deleted sector read with data error
+} IMDSectorType;
+
 class IMDSector {
 	public:
-		vector<uint8_t> _data;
-		unsigned int logical_sector, logical_cylinder, logical_head;
+		vector<uint8_t> data;
+		unsigned int logical_cylinder, logical_head, logical_sector;
+		IMDSectorType type;
+
+		IMDSector(istream &in, unsigned int cyl, unsigned int head, unsigned int sec, unsigned int ssz)
+		{
+			// Set the C/H/S values
+			logical_cylinder = cyl;
+			logical_head = head;
+			logical_sector = sec;
+
+			// Read and decode the sector format byte
+			char b;
+			bool is_compressed = false;
+			in.read(&b, 1);
+			switch (b) {
+				case 0x00:		// Sector data unavailable - could not be read.
+					type = IMDS_NONE;
+					break;
+				case 0x01:		// Normal data
+					type = IMDS_NORMAL;
+					break;
+				case 0x02:		// Normal data -- all bytes have the same value (compressed)
+					type = IMDS_NORMAL;
+					is_compressed = true;
+					break;
+				case 0x03:		// Deleted data
+					type = IMDS_DELETED;
+					break;
+				case 0x04:		// Deleted data -- all bytes have the same value
+					type = IMDS_DELETED;
+					is_compressed = true;
+					break;
+				case 0x05:		// Normal data read with data error
+					type = IMDS_NORMAL_DERR;
+					break;
+				case 0x06:		// Normal data read with data error -- all with same value
+					type = IMDS_NORMAL_DERR;
+					is_compressed = true;
+					break;
+				case 0x07:		// Deleted data read with data error
+					type = IMDS_DELETED_DERR;
+					break;
+				case 0x08:		// Deleted data read with data error -- all with same value
+					type = IMDS_DELETED_DERR;
+					is_compressed = true;
+					break;
+			}
+
+			cout << "chs " << cyl << ":" << head << ":" << sec << " - " << ssz << " bytes, type " << type << ", " << (is_compressed ? "compressed" : "raw") << endl;
+
+			// If there is no sector data, exit.
+			if (type == IMDS_NONE) {
+				return;
+			}
+
+			// Read the sector data
+			if (!is_compressed) {
+				// Uncompressed data
+				char *x = new char[ssz];
+				in.read(x, ssz);
+				for (size_t i = 0; i < ssz; i++) {
+					data.push_back((unsigned char)x[i]);
+				}
+				delete x;
+			} else {
+				// Compressed data -- all bytes in the sector have the same value
+				in.read(&b, 1);
+				for (size_t i = 0; i < ssz; i++) {
+					data.push_back((unsigned char)b);
+				}
+			}
+		}
 };
 
 class IMDTrack {
@@ -73,7 +153,17 @@ class IMDTrack {
 				in.read(sector_head_map, num_sectors);
 			}
 
+			// Convert sector size into bytes
+			size_t sector_bytes = (128 << sector_size);
+
 			// Sector Data
+			for (unsigned int x = 0; x < num_sectors; x++) {
+				IMDSector s(in,
+						has_scm ? sector_cyl_map[x] : phys_cyl,		// cylinder
+						has_shm ? sector_head_map[x] : phys_head,	// head
+						sector_num_map[x],							// sector
+						sector_bytes);								// sector size in bytes
+			}
 		}
 };
 
@@ -87,8 +177,13 @@ class IMDImage {
 		string _header;
 		string _comment;
 	public:
-		IMDImage(istream &in)
+		IMDImage(fstream &in)
 		{
+			// Get the file size
+			in.seekp(0, ios::end);
+			streampos fsize = in.tellp();
+			in.seekp(0, ios::beg);
+
 			// IMD files start with an "IMD v.vv: " header
 			std::getline(in, _header);
 			if ((_header.compare(0, 4, "IMD ") != 0) ||
@@ -106,10 +201,10 @@ class IMDImage {
 			cout << "IMD comment: [" << _comment << "]" << endl;
 
 			// Repeat for every track in the image...
-			while (!in.eof()) {
+			do {
 				IMDTrack t(in);
 				_tracks.push_back(t);
-			}
+			} while (in.tellp() < fsize);
 		}
 };
 
