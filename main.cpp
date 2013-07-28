@@ -25,6 +25,17 @@ typedef enum {
 	IMDS_DELETED_DERR	/// Deleted sector read with data error
 } IMDSectorType;
 
+typedef enum {
+	IMDM_FM_500KBPS,
+	IMDM_FM_300KBPS,
+	IMDM_FM_250KBPS,
+	IMDM_MFM_500KBPS,
+	IMDM_MFM_300KBPS,
+	IMDM_MFM_250KBPS,
+} IMDDataEncoding;
+
+class EIMDNotValid : public exception {};
+
 class IMDSector {
 	public:
 		vector<uint8_t> data;
@@ -74,9 +85,14 @@ class IMDSector {
 					type = IMDS_DELETED_DERR;
 					is_compressed = true;
 					break;
+				default:
+					// unrecognised coding scheme
+					throw EIMDNotValid();
 			}
 
-			cout << "chs " << cyl << ":" << head << ":" << sec << " - " << ssz << " bytes, type " << type << ", " << (is_compressed ? "compressed" : "raw") << endl;
+			cout << "\tchs " << cyl << ":" << head << ":" << sec << " - ";
+			cout << ssz << " bytes, type " << type << ", " << (is_compressed ? "compressed" : "raw");
+			cout << endl;
 
 			// If there is no sector data, exit.
 			if (type == IMDS_NONE) {
@@ -105,7 +121,7 @@ class IMDSector {
 class IMDTrack {
 	public:
 		vector<IMDSector> sectors;
-		unsigned int mode;
+		IMDDataEncoding encoding;
 		unsigned int phys_cyl;
 		unsigned int phys_head;
 		unsigned int sector_size;
@@ -116,8 +132,25 @@ class IMDTrack {
 			bool has_scm, has_shm;
 			unsigned int num_sectors;
 
-			// Mode value
-			in.read(&b, 1); mode = (unsigned char)b;
+			// Mode value -- data rate and encoding scheme
+			in.read(&b, 1);
+			switch (b) {
+				case 0:		// 500kbps FM
+					encoding = IMDM_FM_500KBPS; break;
+				case 1:		// 300kbps FM
+					encoding = IMDM_FM_300KBPS; break;
+				case 2:		// 250kbps FM
+					encoding = IMDM_FM_250KBPS; break;
+				case 3:		// 500kbps MFM
+					encoding = IMDM_MFM_500KBPS; break;
+				case 4:		// 300kbps MFM
+					encoding = IMDM_MFM_300KBPS; break;
+				case 5:		// 250kbps MFM
+					encoding = IMDM_MFM_250KBPS; break;
+				default:
+					// Unknown encoding scheme
+					throw EIMDNotValid();
+			}
 
 			// Physical Cylinder
 			in.read(&b, 1); phys_cyl = (unsigned char)b;
@@ -156,6 +189,8 @@ class IMDTrack {
 			// Convert sector size into bytes
 			size_t sector_bytes = (128 << sector_size);
 
+			cout << "Track " << phys_cyl << "/" << phys_head << " - encoding " << encoding << endl;
+
 			// Sector Data
 			for (unsigned int x = 0; x < num_sectors; x++) {
 				IMDSector s(in,
@@ -165,10 +200,6 @@ class IMDTrack {
 						sector_bytes);								// sector size in bytes
 			}
 		}
-};
-
-class EIMDNotValid : public exception
-{
 };
 
 class IMDImage {
